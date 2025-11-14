@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "finnhub_scraper"
+version = "0.1.0"
+dependencies = [
+  "finnhub-python",
+  "python-dotenv",
+]
+
+[project.scripts]
+finnhub_scraper = "finnhub_scraper.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
