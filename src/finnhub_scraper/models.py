@@ -1,9 +1,9 @@
-# ‼️ New file to define database models
+# ‼️ Updated file
 from sqlalchemy import Column, Integer, String, Float, Date, DateTime, ForeignKey, func
 from sqlalchemy.orm import relationship
-from sqlalchemy.ext.declarative import declarative_base # ‼️ Added
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy import UniqueConstraint # ‼️ Import UniqueConstraint
 
-# ‼️ Base is now declared here
 Base = declarative_base()
 
 class Company(Base):
@@ -12,23 +12,27 @@ class Company(Base):
     This is required to satisfy the foreign key in MetricSnapshot.
     """
     __tablename__ = "companies"
-
     symbol = Column(String, primary_key=True, index=True)
     
-    # ‼️ This relationship links back to the snapshots
-    # cascade="all, delete-orphan" means snapshots are deleted if the company is.
+    # ‼️ This relationship links back to the daily metric snapshots
     snapshots = relationship(
-        "MetricSnapshot", 
+        "MetricSnapshot",  
         back_populates="company", 
         cascade="all, delete-orphan"
     )
+    
+    # ‼️ New relationship for quarterly financial snapshots
+    financial_snapshots = relationship(
+        "FinancialSnapshot",
+        back_populates="company",
+        cascade="all, delete-orphan"
+    )
 
-# This is your provided MetricSnapshot model
+
 class MetricSnapshot(Base):
+    """ This is your existing MetricSnapshot model """
     __tablename__ = "metric_snapshots"
-
     id = Column(Integer, primary_key=True)
-    # ‼️ This links to the Company table's primary key
     symbol = Column(String, ForeignKey("companies.symbol"), nullable=False, index=True) 
     timestamp = Column(DateTime, default=func.now())
     
@@ -59,6 +63,28 @@ class MetricSnapshot(Base):
     payout_ratio_ttm = Column(Float)
     long_term_debt_equity_quarterly = Column(Float)
     current_ratio_quarterly = Column(Float)
-
-    # ‼️ This links back to the Company object
+    
     company = relationship("Company", back_populates="snapshots")
+
+
+# ‼️ New model for quarterly financial data
+class FinancialSnapshot(Base):
+    __tablename__ = "financial_snapshots"
+    id = Column(Integer, primary_key=True)
+    symbol = Column(String, ForeignKey("companies.symbol"), nullable=False, index=True)
+    timestamp = Column(DateTime, default=func.now())
+    year = Column(Integer, nullable=False)
+    quarter = Column(Integer, nullable=False)
+    
+    revenue = Column(Float)
+    earnings_per_share_diluted = Column(Float)
+    net_income_loss = Column(Float)
+    net_profit_margin = Column(Float)
+    
+    # ‼️ This links back to the Company object
+    company = relationship("Company", back_populates="financial_snapshots")
+    
+    # ‼️ Ensures we don't save the same report (symbol, year, quarter) twice
+    __table_args__ = (
+        UniqueConstraint("symbol", "year", "quarter", name="uix_financial_snapshot"),
+    )

@@ -5,9 +5,8 @@ from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
 from datetime import datetime, timedelta # ‼️ Added
 from zoneinfo import ZoneInfo # ‼️ Added
-
 # ‼️ Import Base and models from our models.py file
-from .models import Base, MetricSnapshot, Company
+from .models import Base, MetricSnapshot, Company, FinancialSnapshot # ‼️ Added FinancialSnapshot
 from .errors import ConfigError # ‼️ Import our custom error
 
 # ‼️ Load .env file to get the DATABASE_URL
