@@ -8,6 +8,8 @@ version = "0.1.0"
 dependencies = [
   "finnhub-python",
   "python-dotenv",
+  "sqlalchemy",
+  "psycopg2-binary",
 ]
 
 [project.scripts]
