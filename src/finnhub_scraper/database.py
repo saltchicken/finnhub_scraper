@@ -1,22 +1,22 @@
-# ‼️ This file has been refactored into a class
+
 import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
-from datetime import datetime, timedelta # ‼️ Added
-from zoneinfo import ZoneInfo # ‼️ Added
-# ‼️ Import Base and models from our models.py file
-from .models import Base, MetricSnapshot, Company, FinancialSnapshot # ‼️ Added FinancialSnapshot
-from .errors import ConfigError # ‼️ Import our custom error
+from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
-# ‼️ Load .env file to get the DATABASE_URL
+from .models import Base, MetricSnapshot, Company, FinancialSnapshot
+from .errors import ConfigError
+
+
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
-    # ‼️ Use our specific ConfigError
+
     raise ConfigError("Missing DATABASE_URL. Please set it in your .env file (e.g., postgresql://user:pass@host/db)")
 
-# ‼️ This class now manages the database connection and session
+
 class DatabaseClient:
     def __init__(self):
         """

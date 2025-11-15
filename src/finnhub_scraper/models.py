@@ -1,8 +1,8 @@
-# ‼️ Updated file
+
 from sqlalchemy import Column, Integer, String, Float, Date, DateTime, ForeignKey, func
 from sqlalchemy.orm import relationship
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy import UniqueConstraint # ‼️ Import UniqueConstraint
+from sqlalchemy import UniqueConstraint
 
 Base = declarative_base()
 
@@ -14,14 +14,14 @@ class Company(Base):
     __tablename__ = "companies"
     symbol = Column(String, primary_key=True, index=True)
     
-    # ‼️ This relationship links back to the daily metric snapshots
+
     snapshots = relationship(
         "MetricSnapshot",  
         back_populates="company", 
         cascade="all, delete-orphan"
     )
     
-    # ‼️ New relationship for quarterly financial snapshots
+
     financial_snapshots = relationship(
         "FinancialSnapshot",
         back_populates="company",
@@ -67,7 +67,7 @@ class MetricSnapshot(Base):
     company = relationship("Company", back_populates="snapshots")
 
 
-# ‼️ New model for quarterly financial data
+
 class FinancialSnapshot(Base):
     __tablename__ = "financial_snapshots"
     id = Column(Integer, primary_key=True)
@@ -81,10 +81,10 @@ class FinancialSnapshot(Base):
     net_income_loss = Column(Float)
     net_profit_margin = Column(Float)
     
-    # ‼️ This links back to the Company object
+
     company = relationship("Company", back_populates="financial_snapshots")
     
-    # ‼️ Ensures we don't save the same report (symbol, year, quarter) twice
+
     __table_args__ = (
         UniqueConstraint("symbol", "year", "quarter", name="uix_financial_snapshot"),
     )

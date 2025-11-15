@@ -1,4 +1,4 @@
-# ‼️ New file for custom exceptions
+
 """
 Defines custom exception types for the application,
 inspired by the idea of creating specific errors for each case.

@@ -1,7 +1,7 @@
 import os
 import argparse 
 import numpy as np
-import pandas as pd # ‼️ Added missing pandas import
+import pandas as pd
 from dotenv import load_dotenv
 from datetime import datetime
 from sqlalchemy.exc import IntegrityError 
@@ -179,13 +179,13 @@ def run_financials_update(db: DatabaseClient, client: FinnHubClient):
                         elif concept == "us-gaap_NetIncomeLoss":
                             net_income_loss = value
 
-                # ‼️ Use pd.isna() here (which requires pandas)
+
                 if pd.isna(revenue) and pd.isna(net_income_loss) and pd.isna(earnings_per_share_diluted):
                     # print(f"No useful financial data found for {symbol} Q{quarter} {year}.")
                     continue
                 
                 net_profit_margin = np.nan
-                # ‼️ Use pd.isna() here
+
                 if not pd.isna(net_income_loss) and not pd.isna(revenue):
                     try:
                         float_revenue = float(revenue)
@@ -221,7 +221,7 @@ def run_financials_update(db: DatabaseClient, client: FinnHubClient):
             print(f"Skipping {symbol} due to API Error: {e.args[0]}")
             skipped_count += 1
         except Exception as e:
-            print(f"An unhandled error occurred for {symbol}: {e}") # ‼️ This is where your error was reported
+            print(f"An unhandled error occurred for {symbol}: {e}")
             skipped_count += 1
 
     print(f"\nSuccessfully added {processed_count} new quarterly reports.")

@@ -1,4 +1,4 @@
-# ‼️ New file to hold the client logic
+
 import finnhub
 import os
 import time
@@ -51,7 +51,7 @@ class FinnHubClient:
     def __init__(self, api_key=API_KEY):
         self.client = finnhub.Client(api_key=api_key)
 
-    @RateLimiter(1, 1.25) # ‼️ ~48 calls/minute
+    @RateLimiter(1, 1.25)
     def get_company_basic_financials(self, symbol: str):
         """
         Gets company basic financials from Finnhub.
@@ -64,7 +64,7 @@ class FinnHubClient:
             print(f"Error getting metrics for {symbol}: {e}")
             raise FinnhubAPIError(f"API call failed for {symbol}: {e}") from e
 
-    # ‼️ New method for quarterly financials
+
     @RateLimiter(1, 1.25)
     def get_financials_reported(self, symbol: str):
         """
