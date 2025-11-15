@@ -1,21 +1,17 @@
-
 import os
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
-
+from typing import Optional, Tuple
 from .models import Base, MetricSnapshot, Company, FinancialSnapshot
 from .errors import ConfigError
-
 
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
 if not DATABASE_URL:
-
     raise ConfigError("Missing DATABASE_URL. Please set it in your .env file (e.g., postgresql://user:pass@host/db)")
-
 
 class DatabaseClient:
     def __init__(self):
@@ -43,6 +39,25 @@ class DatabaseClient:
         """
         print("Fetching all symbols from 'companies' table...")
         return [row.symbol for row in self.session.query(Company.symbol).all()]
+
+
+    def get_latest_financial_report_period(self, symbol: str) -> Optional[Tuple[int, int]]:
+        """
+        ‼️ Finds the most recent (year, quarter) for a symbol
+        in the financial_snapshots table.
+        """
+        snapshot = (
+            self.session.query(FinancialSnapshot)
+            .filter(FinancialSnapshot.symbol == symbol)
+            .order_by(FinancialSnapshot.year.desc(), FinancialSnapshot.quarter.desc())
+            .first()
+        )
+        
+        if snapshot:
+            return (snapshot.year, snapshot.quarter)
+        
+        return None
+
 
     def is_within_allowed_update_window(self):
         """
@@ -76,11 +91,9 @@ class DatabaseClient:
         
         # Window end is 8 hours after start (2 AM next day)
         window_end = window_start + timedelta(hours=8)
-
         # Convert to UTC for database query (since DB timestamps are naive UTC)
         start_utc = window_start.astimezone(ZoneInfo("UTC"))
         end_utc = window_end.astimezone(ZoneInfo("UTC"))
-
         # Check if a snapshot exists for this symbol within the window
         return (
             self.session.query(MetricSnapshot)

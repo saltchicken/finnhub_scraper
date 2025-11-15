@@ -127,7 +127,6 @@ def run_metrics_update(db: DatabaseClient, client: FinnHubClient):
     
     print(f"Total processed: {processed_count}, Total skipped: {skipped_count}")
 
-
 def run_financials_update(db: DatabaseClient, client: FinnHubClient):
     """
     Fetches and stores quarterly financial reports for all symbols.
@@ -136,11 +135,16 @@ def run_financials_update(db: DatabaseClient, client: FinnHubClient):
     
     symbols_to_process = db.get_all_symbols()
     print(f"Found {len(symbols_to_process)} symbols to process for financials.")
-    processed_count = 0
+    total_added_count = 0
     skipped_count = 0
-
+    
     for i, symbol in enumerate(symbols_to_process):
         print(f"Processing financials for {symbol} ({i+1}/{len(symbols_to_process)})")
+        
+
+        latest_period = db.get_latest_financial_report_period(symbol)
+        new_reports_for_symbol = 0
+        
         try:
             financials = client.get_financials_reported(symbol)
             
@@ -149,16 +153,28 @@ def run_financials_update(db: DatabaseClient, client: FinnHubClient):
                 skipped_count += 1
                 continue
 
-            # Loop through ALL reported quarters from the API
+
+            # We will rely on this to 'break' early.
             for data in financials["data"]:
                 year = data.get("year")
                 quarter = data.get("quarter")
                 report = data.get("report", {})
-
+                
                 if not year or not quarter:
                     print(f"Skipping report for {symbol} due to missing year/quarter.")
                     continue
 
+                if latest_period:
+                    api_year = int(year)
+                    api_quarter = int(quarter)
+                    db_year, db_quarter = latest_period
+                    
+                    if api_year < db_year or (api_year == db_year and api_quarter <= db_quarter):
+                        # We've hit a report we already have (or older).
+                        # Since data is sorted, we can stop processing reports for this symbol.
+                        print(f"Already have data for {symbol} Q{quarter} {year}. Skipping.")
+                        break 
+                
                 revenue = np.nan
                 earnings_per_share_diluted = np.nan
                 net_income_loss = np.nan
@@ -168,7 +184,6 @@ def run_financials_update(db: DatabaseClient, client: FinnHubClient):
                     for item in report[report_type]:
                         concept = item.get("concept")
                         value = item.get("value")
-
                         if concept in (
                             "us-gaap_RevenueFromContractWithCustomerExcludingAssessedTax",
                             "Revenues",
@@ -178,14 +193,12 @@ def run_financials_update(db: DatabaseClient, client: FinnHubClient):
                             earnings_per_share_diluted = value
                         elif concept == "us-gaap_NetIncomeLoss":
                             net_income_loss = value
-
-
+                            
                 if pd.isna(revenue) and pd.isna(net_income_loss) and pd.isna(earnings_per_share_diluted):
                     # print(f"No useful financial data found for {symbol} Q{quarter} {year}.")
                     continue
                 
                 net_profit_margin = np.nan
-
                 if not pd.isna(net_income_loss) and not pd.isna(revenue):
                     try:
                         float_revenue = float(revenue)
@@ -205,26 +218,41 @@ def run_financials_update(db: DatabaseClient, client: FinnHubClient):
                         net_profit_margin=net_profit_margin,
                     )
                     db.session.add(snapshot)
-                    db.session.commit()
-                    processed_count += 1
-                    print(f"  > Added financial snapshot for {symbol} Q{quarter} {year}")
+                    
 
-                except IntegrityError:
-                    # This is normal if the data already exists
-                    # print(f"  > Snapshot for {symbol} Q{quarter} {year} already exists. Skipping.")
-                    db.session.rollback()
+                    print(f"  > Staging new snapshot for {symbol} Q{quarter} {year}")
+                    new_reports_for_symbol += 1
+                    
                 except Exception as e:
-                    print(f"  > Error adding snapshot for {symbol} Q{quarter} {year}: {e}")
+
+                    print(f"  > Error creating snapshot object for {symbol} Q{quarter} {year}: {e}")
                     db.session.rollback()
         
+
+            if new_reports_for_symbol > 0:
+                try:
+                    db.session.commit()
+                    print(f"  > Committed {new_reports_for_symbol} new reports for {symbol}.")
+                    total_added_count += new_reports_for_symbol
+                except IntegrityError:
+
+                    # e.g., if API data wasn't sorted or had duplicates
+                    db.session.rollback()
+                    print(f"  > Rolled back commit for {symbol} due to existing data (IntegrityError).")
+                except Exception as e:
+                    db.session.rollback()
+                    print(f"  > Error committing new reports for {symbol}: {e}")
+
         except FinnhubAPIError as e:
             print(f"Skipping {symbol} due to API Error: {e.args[0]}")
             skipped_count += 1
+            db.session.rollback()
         except Exception as e:
             print(f"An unhandled error occurred for {symbol}: {e}")
             skipped_count += 1
-
-    print(f"\nSuccessfully added {processed_count} new quarterly reports.")
+            db.session.rollback()
+            
+    print(f"\nSuccessfully added {total_added_count} new quarterly reports.")
     print(f"Total symbols skipped due to errors or no data: {skipped_count}")
 
 
