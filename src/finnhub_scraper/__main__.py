@@ -5,9 +5,9 @@ import threading
 from dotenv import load_dotenv
 import json
 from datetime import datetime
-
 from .database import DatabaseClient
 from .models import MetricSnapshot
+from .errors import ConfigError, FinnhubAPIError # ‼️ Import custom errors
 
 KEY_MAPPING = {
     "52WeekHigh": "week52_high",
@@ -42,9 +42,9 @@ KEY_MAPPING = {
 # --- Dependencies ---
 load_dotenv()
 API_KEY = os.getenv("FINNHUB_API_KEY")
-
 if not API_KEY:
-    raise ValueError("Missing FINNHUB_API_KEY. Please set it in your .env file.")
+    # ‼️ Use our specific ConfigError
+    raise ConfigError("Missing FINNHUB_API_KEY. Please set it in your .env file.")
 
 class RateLimiter:
     """
@@ -93,8 +93,10 @@ class FinnHubClient:
             metrics = self.client.company_basic_financials(symbol=symbol, metric="all")
             return metrics
         except Exception as e:
+            # ‼️ Print the error, but also raise our custom exception
+            # ‼️ This stops the program from proceeding with 'None'
             print(f"Error getting metrics for {symbol}: {e}")
-            return None
+            raise FinnhubAPIError(f"API call failed for {symbol}: {e}") from e
 
 def main():
     """
@@ -103,6 +105,7 @@ def main():
     """
     db = None
     try:
+        # ‼️ This can now raise ConfigError, which we catch below
         db = DatabaseClient()
         db.init_db()
         
@@ -110,12 +113,10 @@ def main():
         #     print("Not within the allowed update window (6 PM - 2 AM PT). Exiting.")
         #     return
         print("Within allowed update window. Proceeding...")
-
         client = FinnHubClient()
         
         symbols_to_process = db.get_all_symbols()
         print(f"Found {len(symbols_to_process)} symbols to process.")
-
         processed_count = 0
         skipped_count = 0
         
@@ -128,46 +129,52 @@ def main():
                     print(f"'{symbol}' was already updated in this window. Skipping. (Total skipped: {skipped_count+1})")
                 skipped_count += 1
                 continue
-
-            print(f"Processing {symbol} ({i+1}/{len(symbols_to_process)})")
-
-            financials = client.get_company_basic_financials(symbol)
             
-            if not financials or 'metric' not in financials:
-                print(f"Failed to retrieve data or 'metric' key missing for {symbol}.")
-                continue
-                
-            metrics_data = financials.get('metric', {})
-            
-            snapshot_data = {}
-            for api_key, db_key in KEY_MAPPING.items():
-                value = metrics_data.get(api_key, None)
-                
-                if value is None:
-                    snapshot_data[db_key] = None
-                    continue
-
-                if db_key == "week52_high_date":
-                    try:
-                        snapshot_data[db_key] = datetime.strptime(value, "%Y-%m-%d").date()
-                    except (ValueError, TypeError):
-                        print(f"Warning: Could not parse date '{value}' for {symbol}")
-                        snapshot_data[db_key] = None
-                else:
-                    try:
-                        snapshot_data[db_key] = float(value)
-                    except (ValueError, TypeError):
-                        print(f"Warning: Could not parse float '{value}' for {symbol}")
-                        snapshot_data[db_key] = None
-
+            # ‼️ Wrap processing for a single symbol in a try/except
             try:
+                print(f"Processing {symbol} ({i+1}/{len(symbols_to_process)})")
+                
+                # ‼️ This can now raise FinnhubAPIError
+                financials = client.get_company_basic_financials(symbol)
+                
+                if not financials or 'metric' not in financials:
+                    print(f"Failed to retrieve data or 'metric' key missing for {symbol}.")
+                    continue
+                    
+                metrics_data = financials.get('metric', {})
+                
+                snapshot_data = {}
+                for api_key, db_key in KEY_MAPPING.items():
+                    value = metrics_data.get(api_key, None)
+                    
+                    if value is None:
+                        snapshot_data[db_key] = None
+                        continue
+
+                    if db_key == "week52_high_date":
+                        try:
+                            snapshot_data[db_key] = datetime.strptime(value, "%Y-%m-%d").date()
+                        except (ValueError, TypeError):
+                            print(f"Warning: Could not parse date '{value}' for {symbol}")
+                            snapshot_data[db_key] = None
+                    else:
+                        try:
+                            snapshot_data[db_key] = float(value)
+                        except (ValueError, TypeError):
+                            print(f"Warning: Could not parse float '{value}' for {symbol}")
+                            snapshot_data[db_key] = None
+                
                 snapshot = MetricSnapshot(
                     symbol=symbol.upper(),
                     **snapshot_data
                 )
                 db.session.add(snapshot)
                 processed_count += 1
-                
+            
+            # ‼️ Catch the specific API error, log it, and continue the loop
+            except FinnhubAPIError as e:
+                print(f"Skipping {symbol} due to API Error: {e.args[0]}")
+            # ‼️ Catch any other error during snapshot creation
             except Exception as e:
                 print(f"Error creating MetricSnapshot object for {symbol}: {e}")
 
@@ -179,9 +186,13 @@ def main():
             print("\nNo new snapshots to commit.")
         
         print(f"Total processed: {processed_count}, Total skipped: {skipped_count}")
-
+    
+    # ‼️ Catch our custom config error at startup
+    except ConfigError as e:
+        print(f"Configuration Error: {e}")
+        
     except Exception as e:
-        print(f"An error occurred in main: {e}")
+        print(f"An unhandled error occurred in main: {e}")
         if db:
             db.session.rollback()
     finally:

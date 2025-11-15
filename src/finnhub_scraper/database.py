@@ -7,15 +7,15 @@ from datetime import datetime, timedelta # ‼️ Added
 from zoneinfo import ZoneInfo # ‼️ Added
 
 # ‼️ Import Base and models from our models.py file
-from .models import Base, MetricSnapshot, Company 
+from .models import Base, MetricSnapshot, Company
+from .errors import ConfigError # ‼️ Import our custom error
 
 # ‼️ Load .env file to get the DATABASE_URL
 load_dotenv()
 DATABASE_URL = os.getenv("DATABASE_URL")
-
 if not DATABASE_URL:
-    raise ValueError("Missing DATABASE_URL. Please set it in your .env file (e.g., postgresql://user:pass@host/db)")
-
+    # ‼️ Use our specific ConfigError
+    raise ConfigError("Missing DATABASE_URL. Please set it in your .env file (e.g., postgresql://user:pass@host/db)")
 
 # ‼️ This class now manages the database connection and session
 class DatabaseClient:
