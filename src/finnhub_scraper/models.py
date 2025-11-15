@@ -1,7 +1,10 @@
 # ‼️ New file to define database models
 from sqlalchemy import Column, Integer, String, Float, Date, DateTime, ForeignKey, func
 from sqlalchemy.orm import relationship
-from .database import Base  # ‼️ Import Base from our new database.py
+from sqlalchemy.ext.declarative import declarative_base # ‼️ Added
+
+# ‼️ Base is now declared here
+Base = declarative_base()
 
 class Company(Base):
     """

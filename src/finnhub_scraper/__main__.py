@@ -4,13 +4,10 @@ import time
 import threading
 from dotenv import load_dotenv
 import json
-import argparse  # ‼️ Added to accept symbols as arguments
-from datetime import datetime  # ‼️ Added for date parsing
+from datetime import datetime
 
-# ‼️ Import DB session, init function, and models
-from .database import SessionLocal, init_db
-from .models import Company, MetricSnapshot
-from sqlalchemy import select # ‼️ Added for querying
+from .database import DatabaseClient
+from .models import MetricSnapshot
 
 KEY_MAPPING = {
     "52WeekHigh": "week52_high",
@@ -42,22 +39,16 @@ KEY_MAPPING = {
     "currentRatioQuarterly": "current_ratio_quarterly",
 }
 
-# --- Dependencies from the original file ---
+# --- Dependencies ---
 load_dotenv()
 API_KEY = os.getenv("FINNHUB_API_KEY")
 
-# ‼️ Also check for DATABASE_URL (though database.py does this too)
-DATABASE_URL = os.getenv("DATABASE_URL")
-
 if not API_KEY:
     raise ValueError("Missing FINNHUB_API_KEY. Please set it in your .env file.")
-if not DATABASE_URL:
-     raise ValueError("Missing DATABASE_URL. Please set it in your .env file.")
 
 class RateLimiter:
     """
     A decorator class to limit the rate of function calls.
-    Copied from src/trader/external_api/finnhub_client.py
     """
     def __init__(self, max_calls, period):
         self.max_calls = max_calls
@@ -84,7 +75,7 @@ class RateLimiter:
             return func(*args, **kwargs)
         return wrapped
 
-# --- Extracted Functionality ---
+# --- Finnhub Client ---
 class FinnHubClient:
     """
     Minimal client containing only the requested functionality.
@@ -105,68 +96,41 @@ class FinnHubClient:
             print(f"Error getting metrics for {symbol}: {e}")
             return None
 
-# ‼️ Helper function to ensure the company exists in the DB
-def get_or_create_company(db_session, symbol: str) -> Company:
-    """
-    Fetches a company by symbol or creates it if it doesn't exist.
-    """
-    # Try to fetch the company
-    statement = select(Company).where(Company.symbol == symbol)
-    company = db_session.execute(statement).scalar_one_or_none()
-    
-    if company:
-        print(f"Found existing company: {symbol}")
-        return company
-    else:
-        # Create it
-        print(f"Creating new company: {symbol}")
-        new_company = Company(symbol=symbol)
-        db_session.add(new_company)
-        # We commit here to ensure the company exists before the snapshot
-        # is added, which has a foreign key constraint.
-        # A more complex setup might add all companies, commit, 
-        # then add all snapshots. This is simpler.
-        try:
-            db_session.commit()
-            db_session.refresh(new_company)
-            print(f"Committed new company: {symbol}")
-            return new_company
-        except Exception as e:
-            print(f"Error creating company {symbol}: {e}")
-            db_session.rollback()
-            return None
-
-# ‼️ Main function updated for DB operations
 def main():
     """
-    Main function to fetch metrics and save them to the database.
+    Main function to fetch all symbols from the DB,
+    check if they need updates, and save new snapshots.
     """
-    # ‼️ Set up argument parsing to accept symbols
-    parser = argparse.ArgumentParser(description="Fetch Finnhub metrics and save to DB.")
-    parser.add_argument(
-        "symbols", 
-        metavar="SYMBOL", 
-        type=str, 
-        nargs="+", 
-        help="One or more stock symbols to fetch (e.g., AAPL MSFT)"
-    )
-    args = parser.parse_args()
-    
-    # ‼️ 1. Initialize the database (create tables if they don't exist)
-    init_db()
-    
-    client = FinnHubClient()
-    
-    # ‼️ 2. Get a database session
-    with SessionLocal() as db_session:
-        for symbol in args.symbols:
-            # ‼️ 3. Ensure the parent Company exists
-            company = get_or_create_company(db_session, symbol.upper())
-            if not company:
-                print(f"Skipping snapshot for {symbol} due to company creation error.")
+    db = None
+    try:
+        db = DatabaseClient()
+        db.init_db()
+        
+        # if not db.is_within_allowed_update_window():
+        #     print("Not within the allowed update window (6 PM - 2 AM PT). Exiting.")
+        #     return
+        print("Within allowed update window. Proceeding...")
+
+        client = FinnHubClient()
+        
+        symbols_to_process = db.get_all_symbols()
+        print(f"Found {len(symbols_to_process)} symbols to process.")
+
+        processed_count = 0
+        skipped_count = 0
+        
+        # Loop through all symbols
+        for i, symbol in enumerate(symbols_to_process):
+            
+            if db.was_updated_in_nightly_window(symbol):
+                # Only print skip message periodically to avoid log spam
+                if skipped_count % 100 == 0:
+                    print(f"'{symbol}' was already updated in this window. Skipping. (Total skipped: {skipped_count+1})")
+                skipped_count += 1
                 continue
 
-            # ‼️ 4. Fetch the financial data
+            print(f"Processing {symbol} ({i+1}/{len(symbols_to_process)})")
+
             financials = client.get_company_basic_financials(symbol)
             
             if not financials or 'metric' not in financials:
@@ -175,53 +139,55 @@ def main():
                 
             metrics_data = financials.get('metric', {})
             
-            # ‼️ 5. Build the MetricSnapshot object data
             snapshot_data = {}
             for api_key, db_key in KEY_MAPPING.items():
                 value = metrics_data.get(api_key, None)
                 
-                # Handle NULLs: if value is None, it will be stored as NULL
                 if value is None:
                     snapshot_data[db_key] = None
                     continue
 
-                # ‼️ Specific handling for date column
                 if db_key == "week52_high_date":
                     try:
-                        # Parse "YYYY-MM-DD" string into a date object
                         snapshot_data[db_key] = datetime.strptime(value, "%Y-%m-%d").date()
                     except (ValueError, TypeError):
                         print(f"Warning: Could not parse date '{value}' for {symbol}")
                         snapshot_data[db_key] = None
                 else:
-                    # For all other (Float) columns
                     try:
                         snapshot_data[db_key] = float(value)
                     except (ValueError, TypeError):
                         print(f"Warning: Could not parse float '{value}' for {symbol}")
                         snapshot_data[db_key] = None
 
-            # ‼️ 6. Create the snapshot instance
             try:
                 snapshot = MetricSnapshot(
                     symbol=symbol.upper(),
                     **snapshot_data
                 )
+                db.session.add(snapshot)
+                processed_count += 1
                 
-                # ‼️ 7. Add to the session
-                db_session.add(snapshot)
-                print(f"Staged snapshot for {symbol} for commit.")
-            
             except Exception as e:
                 print(f"Error creating MetricSnapshot object for {symbol}: {e}")
 
-        # ‼️ 8. Commit all snapshots at the end of the loop
-        try:
-            db_session.commit()
-            print(f"\nSuccessfully committed snapshots for: {', '.join(args.symbols)}")
-        except Exception as e:
-            print(f"\nError committing snapshots to database: {e}")
-            db_session.rollback()
+        if processed_count > 0:
+            print(f"\nCommitting {processed_count} new snapshots to the database...")
+            db.session.commit()
+            print(f"Successfully committed {processed_count} snapshots.")
+        else:
+            print("\nNo new snapshots to commit.")
+        
+        print(f"Total processed: {processed_count}, Total skipped: {skipped_count}")
+
+    except Exception as e:
+        print(f"An error occurred in main: {e}")
+        if db:
+            db.session.rollback()
+    finally:
+        if db:
+            db.session.close()
+            print("Database session closed.")
 
 # --- Example Usage ---
 if __name__ == "__main__":
