@@ -7,7 +7,7 @@ from datetime import datetime
 from sqlalchemy.exc import IntegrityError 
 
 from .database import DatabaseClient
-from .models import MetricSnapshot, FinancialSnapshot 
+from .models import MetricSnapshot, FinancialSnapshot, Company
 from .errors import ConfigError, FinnhubAPIError
 from .client import FinnHubClient 
 
@@ -262,13 +262,101 @@ def run_financials_update(db: DatabaseClient, client: FinnHubClient):
     else:
         print("\n--- Summary: No symbols were updated with new reports. ---")
 
+def run_companies_update(db: DatabaseClient, client: FinnHubClient):
+    """
+    Fetches all US stocks and updates the 'companies' table.
+    - Adds new companies.
+    - Refreshes profile data for existing companies.
+    """
+    print("Starting companies table update...")
+    try:
+        symbols_from_api = client.get_all_stocks(exchange="US")
+    except FinnhubAPIError as e:
+        print(f"Failed to get stock list from Finnhub: {e}. Exiting task.")
+        return
+    
+    print(f"Found {len(symbols_from_api)} symbols from API. Processing...")
+    
+    new_count = 0
+    updated_count = 0
+    failed_count = 0
+    
+    for i, symbol in enumerate(symbols_from_api):
+        if i % 100 == 0:
+            print(f"--- Progress: {i}/{len(symbols_from_api)} ---")
+        
+        try:
+            # Check if company already exists
+            existing_company = db.session.query(Company).filter(Company.symbol == symbol).first()
+            
+            # Fetch profile data (this call is rate-limited by the client)
+            profile = client.get_company_profile(symbol)
+            
+            if not profile or not profile.get("name"):
+                print(f"No valid profile data for {symbol}. Skipping.")
+                failed_count += 1
+                continue
+                
+            ipo_date = None
+            if profile.get("ipo"):
+                try:
+                    ipo_date = datetime.strptime(profile["ipo"], "%Y-%m-%d").date()
+                except (ValueError, TypeError):
+                    ipo_date = None
+            
+            if existing_company:
+                # Update existing
+                existing_company.description = profile.get("name")
+                existing_company.ipo = ipo_date
+                existing_company.weburl = profile.get("weburl")
+                existing_company.sector = profile.get("finnhubIndustry")
+                updated_count += 1
+            else:
+                # Add new
+                new_company = Company(
+                    symbol=symbol,
+                    description=profile.get("name"),
+                    ipo=ipo_date,
+                    weburl=profile.get("weburl"),
+                    sector=profile.get("finnhubIndustry")
+                )
+                db.session.add(new_company)
+                new_count += 1
+            
+            # Commit in batches to avoid one large transaction
+            if i > 0 and i % 200 == 0:
+                print(f"Committing batch... (New: {new_count}, Updated: {updated_count})")
+                db.session.commit()
+        
+        except FinnhubAPIError as e:
+            print(f"Skipping {symbol} due to API Error: {e.args[0]}")
+            failed_count += 1
+            db.session.rollback()
+        except Exception as e:
+            print(f"Unhandled error for {symbol}: {e}")
+            failed_count += 1
+            db.session.rollback()
+    
+    # Final commit for any remaining entries
+    print("Committing final batch...")
+    try:
+        db.session.commit()
+    except Exception as e:
+        print(f"Error on final commit: {e}")
+        db.session.rollback()
+    
+    print("\n--- Companies Update Summary ---")
+    print(f"New companies added: {new_count}")
+    print(f"Existing companies updated: {updated_count}")
+    print(f"Symbols failed/skipped: {failed_count}")
+    print("----------------------------------")
 
 def main():
     parser = argparse.ArgumentParser(description="Finnhub Scraper CLI")
     parser.add_argument(
         "--task",
         type=str,
-        choices=["metrics", "financials"],
+        choices=["metrics", "financials", "companies"],
         default="metrics",
         help="The task to run: 'metrics' (default) for daily basic financials, or 'financials' for quarterly reports."
     )
@@ -282,6 +370,8 @@ def main():
         
         if args.task == "financials":
             run_financials_update(db, client)
+        elif args.task == "companies":
+            run_companies_update(db, client)
         else:
             # Default to metrics
             run_metrics_update(db, client)

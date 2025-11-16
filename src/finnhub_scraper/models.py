@@ -13,21 +13,22 @@ class Company(Base):
     """
     __tablename__ = "companies"
     symbol = Column(String, primary_key=True, index=True)
+    description = Column(String)
+    ipo = Column(Date)
+    weburl = Column(String)
+    sector = Column(String)
     
-
     snapshots = relationship(
         "MetricSnapshot",  
         back_populates="company", 
         cascade="all, delete-orphan"
     )
     
-
     financial_snapshots = relationship(
         "FinancialSnapshot",
         back_populates="company",
         cascade="all, delete-orphan"
     )
-
 
 class MetricSnapshot(Base):
     """ This is your existing MetricSnapshot model """
