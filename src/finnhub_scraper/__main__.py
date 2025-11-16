@@ -137,6 +137,7 @@ def run_financials_update(db: DatabaseClient, client: FinnHubClient):
     print(f"Found {len(symbols_to_process)} symbols to process for financials.")
     total_added_count = 0
     skipped_count = 0
+    symbols_with_new_reports = set()
     
     for i, symbol in enumerate(symbols_to_process):
         print(f"Processing financials for {symbol} ({i+1}/{len(symbols_to_process)})")
@@ -170,9 +171,6 @@ def run_financials_update(db: DatabaseClient, client: FinnHubClient):
                     db_year, db_quarter = latest_period
                     
                     if api_year < db_year or (api_year == db_year and api_quarter <= db_quarter):
-                        # We've hit a report we already have (or older).
-                        # Since data is sorted, we can stop processing reports for this symbol.
-                        print(f"Already have data for {symbol} Q{quarter} {year}. Skipping.")
                         break 
                 
                 revenue = np.nan
@@ -234,6 +232,7 @@ def run_financials_update(db: DatabaseClient, client: FinnHubClient):
                     db.session.commit()
                     print(f"  > Committed {new_reports_for_symbol} new reports for {symbol}.")
                     total_added_count += new_reports_for_symbol
+                    symbols_with_new_reports.add(symbol)
                 except IntegrityError:
 
                     # e.g., if API data wasn't sorted or had duplicates
@@ -254,6 +253,14 @@ def run_financials_update(db: DatabaseClient, client: FinnHubClient):
             
     print(f"\nSuccessfully added {total_added_count} new quarterly reports.")
     print(f"Total symbols skipped due to errors or no data: {skipped_count}")
+
+    if symbols_with_new_reports:
+        print(f"\n--- Summary: Symbols Updated ({len(symbols_with_new_reports)}) ---")
+        # Print as a sorted list for clarity
+        for symbol in sorted(list(symbols_with_new_reports)):
+            print(f"  * {symbol}")
+    else:
+        print("\n--- Summary: No symbols were updated with new reports. ---")
 
 
 def main():
